@@ -4,9 +4,9 @@ import { ethers } from "ethers";
 const CONTRACT_ADDRESS = "0x529225162b86489fcbD6320b88C4BAEAAE586a67";
 const RPC_URL = "https://worldchain-mainnet.g.alchemy.com/public";
 
-// ABI mein backend ke liye refund / cancel function (Agar aapke contract mein function ka naam kuch aur hai jaise cancelMatch ya refundDeposit, toh yahan change kar lena)
+// Contract ke actual cancelWaitingMatch function ke hisab se ABI
 const ABI = [
-  "function refundMatch(bytes32 matchId, address player) external"
+  "function cancelWaitingMatch(bytes32 matchId) external"
 ];
 
 export default async function handler(req, res) {
@@ -14,10 +14,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { matchId, playerAddress } = req.body;
+  const { matchId } = req.body;
 
-  if (!matchId || !playerAddress) {
-    return res.status(400).json({ error: 'Missing parameters' });
+  if (!matchId) {
+    return res.status(400).json({ error: 'Missing parameters: matchId is required' });
   }
 
   try {
@@ -39,18 +39,18 @@ export default async function handler(req, res) {
     const hashBuf = await crypto.subtle.digest('SHA-256', encoder.encode(matchId));
     const bytes32MatchId = '0x' + Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
 
-    console.log(`Refunding match ${matchId} for player ${playerAddress}...`);
+    console.log(`Cancelling waiting match ${matchId}...`);
     
-    // 4. Contract par refund/cancel function call karna
-    const tx = await contract.refundMatch(bytes32MatchId, playerAddress);
+    // 4. Contract par cancelWaitingMatch function call karna
+    const tx = await contract.cancelWaitingMatch(bytes32MatchId);
 
     // 5. Transaction complete hone ka wait karna
     const receipt = await tx.wait();
-    console.log(`Refund processed successfully! TX Hash: ${receipt.hash}`);
+    console.log(`Match cancelled successfully! TX Hash: ${receipt.hash}`);
 
     return res.status(200).json({ success: true, txHash: receipt.hash });
 
-  } catch (error) {
+  }catch (error) {
     console.error("Refund error:", error);
     return res.status(500).json({ success: false, error: error.message || "Internal server error" });
   }
