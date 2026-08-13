@@ -10,7 +10,7 @@ const PAYMENT_RECV_WALLET = "0x8FB70CDFb545C7D9b842cBE37B9aba84059Bf14b";
 const WLD_TOKEN_CONTRACT = "0x2cFc85d8E48F8EAB294be644d9E25C3030863003";  
 const WORLDCHAIN_RPC = "https://worldchain-mainnet.g.alchemy.com/public";  
 const PROXY_API_URL = "/api/proxy-request";  
-const DICE_DUEL_CONTRACT = "0x529225162b86489fcbD6320b88C4BAEAAE586a67";  
+const DICE_DUEL_CONTRACT = "0x2f9D3bC7125d563434cbc601b15Add6Ba0F3F3Db";  
 
 // BACKGROUND SETUP  
 let bgMusic = new Audio('assets/bg-music.mp3');   
