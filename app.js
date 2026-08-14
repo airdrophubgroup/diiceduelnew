@@ -121,7 +121,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if (typeof initGlobalChat === 'function') initGlobalChat();  
   fetchLeaderboard();  
-  await resumeGameIfActive();  
 });  
 
 window.addEventListener('beforeunload', () => {  
@@ -583,45 +582,6 @@ window.submitWithdrawRequest = async function() {
   fetchUserBalanceAndLeaderboard(myAddress);  
 };  
 
-async function resumeGameIfActive() {  
-  let savedMatchId = localStorage.getItem("currentMatchId");  
-  if (!savedMatchId && myAddress) {  
-    try {  
-      const { data: activeMatch } = await supabaseClient.from('matches').select('*').or(`p1_address.eq.${myAddress},p2_address.eq.${myAddress}`).eq('status', 'playing').order('created_at', { ascending: false }).limit(1).maybeSingle();  
-      if (activeMatch) {  
-        savedMatchId = activeMatch.id;  
-        localStorage.setItem("currentMatchId", savedMatchId);  
-        localStorage.setItem("isP1", (activeMatch.p1_address === myAddress).toString());  
-      }  
-    } catch (e) {}  
-  }  
-  if (!savedMatchId) return;  
-
-  try {  
-    const { data } = await supabaseClient.from('matches').select('*').eq('id', savedMatchId).single();  
-    if (data && data.status === 'playing') {  
-      matchId = savedMatchId;  
-      matchIdBytes32Global = await matchIdToBytes32(data.match_id || matchId);  
-      isP1 = localStorage.getItem("isP1") === "true";  
-      selectedFee = Number(data.fee || 0.5);  
-      gameActive = true;  
-      myScore = isP1 ? data.p1_score : data.p2_score;  
-      oppScore = isP1 ? data.p2_score : data.p1_score;  
-      myTurnsLeft = Math.max(0, 15 - ((isP1 ? data.p1_taps_used : data.p2_taps_used) || 0));  
-
-      setUserData(myUsername, myAddress);  
-      $('opp-name-tag').innerText = (isP1 ? data.p2_username : data.p1_username) || 'OPP';  
-      $('setup-screen').style.display = 'none';  
-      $('waiting-overlay').style.display = 'none';  
-      $('game-screen').style.display = 'block';  
-      $('my-score').innerText = myScore || 0;  
-      $('opp-score').innerText = oppScore || 0;  
-      setupChannel();  
-      runTimer(data.start_time);  
-    }  
-  } catch (e) {}  
-}  
-
 function setUserData(username, address){  
   myUsername = username;  
   myAddress = address ? address.toLowerCase() : address;  
@@ -742,8 +702,7 @@ async function handlePlayButtonClick(){
   }  
 
   // ==========================================
-  // STEP 2: AGAR USER PAYMENT CANCEL KARTA HAI
-  // (Database ko touch hi nahi karega!)
+  // STEP 2: AGAR CANCEL YA FAIL HUA (ZERO SUPABASE CALL)
   // ==========================================
   if (!paymentSuccessful) {  
     let existingWarning = document.getElementById('neon-payment-warning');  
@@ -765,7 +724,7 @@ async function handlePlayButtonClick(){
   }  
 
   // ==========================================
-  // STEP 3: PAYMENT CONFIRMED HONE KE BAAD HI ROW BANAYEIN
+  // STEP 3: PAYMENT CONFIRMED HONE PAR HI MATCH CREATE
   // ==========================================
   hasPaid = true;
   $('wait-status').innerText = `Finding opponent...`;  
@@ -881,7 +840,6 @@ async function cancelMatchmaking(showAlert = true) {
   const paid = hasPaid;
   const targetBytes32 = matchIdBytes32Global;
 
-  // SIRF TABHI REFUND HOGA AGAR USER NE ASAL ME PAY KIYA THA
   if (targetMatchId && targetWallet && paid) {  
     try {  
       await supabaseClient.rpc('secure_leave_waiting_match', {  
