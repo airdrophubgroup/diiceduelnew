@@ -884,27 +884,42 @@ function setupChannel() {
 }  
 
 async function cancelMatchmaking(showAlert = true) {  
-  if (!matchmakingActive || gameActive) return;  
-  if (matchId) {  
+  if (!matchId && !matchmakingActive) return;  
+  
+  const targetMatchId = matchId;
+  const targetWallet = myAddress ? myAddress.toLowerCase().trim() : '';
+  const feeToRefund = selectedFee;
+
+  if (targetMatchId && targetWallet) {  
     try {  
+      // 1. Leave match status in DB
       await supabaseClient.rpc('secure_leave_waiting_match', {  
-        p_match_id: matchId, p_wallet: myAddress  
+        p_match_id: targetMatchId, p_wallet: targetWallet  
       });  
 
-      // Queue an on-chain refund — the resolver worker picks this up,  
-      // re-verifies the match on-chain, and calls cancelWaitingMatch()  
-      // using the operator wallet. This is what makes the refund actually  
-      // automatic instead of requiring an emergencyTokenTransfer later.  
-      try {  
+      // 2. Direct Queue Insert (Immediate DB sync)
+      const { error: insertErr } = await supabaseClient
+        .from('refund_queue')
+        .insert({
+          match_id: targetMatchId,
+          wallet_address: targetWallet,
+          fee: feeToRefund,
+          status: 'pending'
+        });
+
+      // 3. RPC Fallback if direct insert fails
+      if (insertErr) {
         await supabaseClient.rpc('queue_refund_request', {  
-          p_match_id: matchId, p_wallet: myAddress  
+          p_match_id: targetMatchId, p_wallet: targetWallet  
         });  
-      } catch (e) {}  
+      }  
 
       if (showAlert) {  
-        alert(`Search cancelled. Your ${selectedFee} WLD refund is being processed on-chain.`);  
+        alert(`Search cancelled. Your ${feeToRefund} WLD refund is being processed on-chain.`);  
       }  
-    } catch(e) {}  
+    } catch(e) {
+      console.error("Cancel refund queue error:", e);
+    }  
   }  
   resetToHome();  
 }  
