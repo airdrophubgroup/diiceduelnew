@@ -9,7 +9,6 @@ const ADMIN_WALLET = "0x8c5b20653abcb87f6b3a7cb469d8623e94bfb6a1";
 const PAYMENT_RECV_WALLET = "0x8FB70CDFb545C7D9b842cBE37B9aba84059Bf14b";   
 const WLD_TOKEN_CONTRACT = "0x2cFc85d8E48F8EAB294be644d9E25C3030863003";  
 const WORLDCHAIN_RPC = "https://worldchain-mainnet.g.alchemy.com/public";  
-const PROXY_API_URL = "/api/proxy-request";  
 const DICE_DUEL_CONTRACT = "0x2f9D3bC7125d563434cbc601b15Add6Ba0F3F3Db";  
 
 // BACKGROUND SETUP  
@@ -46,13 +45,13 @@ async function matchIdToBytes32(uuidStr) {
 
 const supabaseClient = createClient(SB_URL, SB_KEY);  
 
-let myAddress = "", myUsername = "", matchId, isP1, myScore = 0, oppScore = 0;  
+let myAddress = "", myUsername = "", matchId, matchIdBytes32Global = null, isP1, myScore = 0, oppScore = 0;  
 let gameActive = false, matchmakingActive = false, channel, globalChatChannel, mTimer, pollTimer, gameTimerInterval;  
 let selectedFee = 0.5;  
 let realWorldIdUser = false;   
 let currentTnvBalance = 0;  
 let currentWldBalance = 100;  
-let hasPaid = false; 
+let hasPaid = false;
 
 let myTurnsLeft = 15;  
 let isTimingLocked = false;  
@@ -622,6 +621,7 @@ async function resumeGameIfActive() {
     const { data } = await supabaseClient.from('matches').select('*').eq('id', savedMatchId).single();  
     if (data && data.status === 'playing') {  
       matchId = savedMatchId;  
+      matchIdBytes32Global = await matchIdToBytes32(data.match_id || matchId);  
       isP1 = localStorage.getItem("isP1") === "true";  
       selectedFee = Number(data.fee || 0.5);  
       gameActive = true;  
@@ -728,14 +728,9 @@ async function handlePlayButtonClick(){
     return;  
   }  
 
-  if (DICE_DUEL_CONTRACT.includes('PUT_YOUR_DEPLOYED')) {  
-    alert('DICE_DUEL_CONTRACT address is not set in app.js yet.');  
-    $('start-btn').disabled = false;  
-    return;  
-  }  
-
   hasPaid = false;
   matchId = null;
+  matchIdBytes32Global = null;
   matchmakingActive = true;  
   $('waiting-overlay').style.display = 'flex';  
   $('wait-status').innerText = `Confirm payment in World App...`;  
@@ -744,7 +739,7 @@ async function handlePlayButtonClick(){
   let paymentSuccessful = false;  
   let onChainTxId = null;  
 
-  // Step 1: Prompt World App Payment BEFORE creating match in database
+  // Step 1: Prompt World App Payment
   try {  
     const { finalPayload } = await MiniKit.commandsAsync.pay({  
       reference: paymentReference,  
@@ -758,7 +753,7 @@ async function handlePlayButtonClick(){
     paymentSuccessful = false;  
   }  
 
-  // Step 2: If payment was cancelled or failed -> reset immediately without touching database
+  // Step 2: Payment Cancelled or Failed
   if (!paymentSuccessful) {  
     let existingWarning = document.getElementById('neon-payment-warning');  
     if (!existingWarning) {  
@@ -778,7 +773,7 @@ async function handlePlayButtonClick(){
     return;  
   }  
 
-  // Step 3: Payment is successful -> Now create/join match and mark hasPaid = true
+  // Step 3: Payment Success -> Create/Join Match
   hasPaid = true;
   $('wait-status').innerText = `Finding opponent...`;  
 
@@ -803,6 +798,10 @@ async function handlePlayButtonClick(){
 
   matchId = matchRow.id;  
   isP1 = (matchRow.p1_address === myAddress);  
+
+  try {  
+    matchIdBytes32Global = await matchIdToBytes32(matchRow.match_id || matchId);  
+  } catch (e) {}  
 
   try {  
     await supabaseClient.rpc('queue_pending_deposit', {  
@@ -887,34 +886,31 @@ async function cancelMatchmaking(showAlert = true) {
   const targetWallet = myAddress ? myAddress.toLowerCase().trim() : '';
   const feeToRefund = selectedFee;
   const paid = hasPaid;
+  const targetBytes32 = matchIdBytes32Global;
 
-  // Agar user ne pay kiya tha aur matchId exist karta hai
   if (targetMatchId && targetWallet && paid) {  
     try {  
       await supabaseClient.rpc('secure_leave_waiting_match', {  
         p_match_id: targetMatchId, p_wallet: targetWallet  
       });  
 
-      const { error: insertErr } = await supabaseClient
-        .from('refund_queue')
-        .insert({
-          match_id: targetMatchId,
-          wallet_address: targetWallet,
-          fee: feeToRefund,
-          status: 'pending'
-        });
-
-      if (insertErr) {
-        await supabaseClient.rpc('queue_refund_request', {  
-          p_match_id: targetMatchId, p_wallet: targetWallet  
-        });  
-      }  
+      // Direct Vercel Serverless On-Chain Refund Trigger
+      if (targetBytes32) {
+        fetch('/api/refund-match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            matchIdBytes32: targetBytes32,
+            action: 'CANCEL_REFUND'
+          })
+        }).catch(err => console.error("Refund API Error:", err));
+      }
 
       if (showAlert) {  
-        alert(`Search cancelled. Your ${feeToRefund} WLD refund is being processed on-chain.`);  
+        alert(`Search cancelled. Your ${feeToRefund} WLD refund has been processed.`);  
       }  
     } catch(e) {
-      console.error("Cancel matchmaking error:", e);
+      console.error("Cancel error:", e);
     }  
   } else {
     if (showAlert) {
@@ -929,7 +925,7 @@ async function checkBothReady(){
   if (!matchmakingActive || gameActive) return;  
   if (!matchId) return;
 
-  const { data, error } = await supabaseClient.from('matches').select('status, p1_username, p2_username').eq('id', matchId).single();  
+  const { data, error } = await supabaseClient.from('matches').select('status, p1_username, p2_username, match_id').eq('id', matchId).single();  
   if (error) return;  
 
   if (data.status === 'matched' || data.status === 'playing'){  
@@ -937,6 +933,10 @@ async function checkBothReady(){
     $('opp-name-tag').innerText = (isP1 ? data.p2_username : data.p1_username) || 'OPP';  
     localStorage.setItem("currentMatchId", matchId);  
     localStorage.setItem("isP1", isP1);  
+
+    if (data.match_id) {
+      matchIdBytes32Global = await matchIdToBytes32(data.match_id);
+    }
 
     channel.send({ type: 'broadcast', event: 'game_start', payload: { oppName: myUsername } });  
     clearInterval(mTimer);  
@@ -1051,18 +1051,27 @@ async function finalizeGame(){
   const myFinal = isP1 ? finalRow.p1_score : finalRow.p2_score;  
   const opFinal = isP1 ? finalRow.p2_score : finalRow.p1_score;  
   const isWin = myFinal > opFinal;  
+  const oppAddress = isP1 ? finalRow.p2_address : finalRow.p1_address;
+  const winnerWallet = isWin ? myAddress : oppAddress;
 
   const exactChipEarn = calculatePayout(matchFee);   
+
+  // Direct On-Chain Settlement Call (Winner Payout + Admin Platform Fee)
+  if (matchIdBytes32Global && winnerWallet) {
+    fetch('/api/refund-match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        matchIdBytes32: matchIdBytes32Global,
+        action: 'SETTLE_WINNER',
+        winnerAddress: winnerWallet
+      })
+    }).catch(err => console.error("Settle API Error:", err));
+  }
 
   if (myAddress && !sessionStorage.getItem(`settled_${matchId}_${myAddress}`)) {  
       sessionStorage.setItem(`settled_${matchId}_${myAddress}`, "true");  
       try {  
-          await supabaseClient.rpc('queue_match_settlement', {  
-              p_match_id: matchId,  
-              p_reporter_address: myAddress,  
-              p_is_win: isWin,  
-          });  
-
           if (isWin) {  
               await logMatchHistory(myAddress, 'VICTORY', exactChipEarn, `Won match (${matchFee} WLD duel)`);  
           } else {  
@@ -1112,6 +1121,7 @@ function resetToHome(){
   gameActive = false;  
   hasPaid = false;
   matchId = null;
+  matchIdBytes32Global = null;
 }  
 
 document.querySelectorAll('.fee-chip').forEach(chip => {  
