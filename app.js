@@ -45,13 +45,13 @@ async function matchIdToBytes32(uuidStr) {
 
 const supabaseClient = createClient(SB_URL, SB_KEY);  
 
-let myAddress = "", myUsername = "", matchId, matchIdBytes32Global = null, isP1, myScore = 0, oppScore = 0;  
+let myAddress = "", myUsername = "", matchId = null, matchIdBytes32Global = null, isP1, myScore = 0, oppScore = 0;  
 let gameActive = false, matchmakingActive = false, channel, globalChatChannel, mTimer, pollTimer, gameTimerInterval;  
 let selectedFee = 0.5;  
 let realWorldIdUser = false;   
 let currentTnvBalance = 0;  
 let currentWldBalance = 100;  
-let hasPaid = false;
+let hasPaid = false; 
 
 let myTurnsLeft = 15;  
 let isTimingLocked = false;  
@@ -106,26 +106,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (typeof MiniKit !== 'undefined' && MiniKit.isInstalled()) {  
     if ($('landingHint')) $('landingHint').textContent = 'World App detected — signing in...';  
     try { await performWalletAuth(true); } catch(err) {}  
-  }  
-
-  if (myAddress) {  
-    try {  
-      const { data: stuckMatches } = await supabaseClient  
-        .from('matches')  
-        .select('*')  
-        .or(`p1_address.eq.${myAddress},p2_address.eq.${myAddress}`)  
-        .eq('status', 'waiting');  
-
-      if (stuckMatches && stuckMatches.length > 0) {  
-        for (let match of stuckMatches) {  
-          if (!match.game_started) {  
-            await supabaseClient.rpc('secure_leave_waiting_match', {  
-              p_match_id: match.id, p_wallet: myAddress  
-            });  
-          }  
-        }  
-      }  
-    } catch (e) {}  
   }  
 
   let waitingOverlay = $('waiting-overlay');  
@@ -728,6 +708,12 @@ async function handlePlayButtonClick(){
     return;  
   }  
 
+  if (DICE_DUEL_CONTRACT.includes('PUT_YOUR_DEPLOYED')) {  
+    alert('DICE_DUEL_CONTRACT address is not set in app.js yet.');  
+    $('start-btn').disabled = false;  
+    return;  
+  }  
+
   hasPaid = false;
   matchId = null;
   matchIdBytes32Global = null;
@@ -739,7 +725,9 @@ async function handlePlayButtonClick(){
   let paymentSuccessful = false;  
   let onChainTxId = null;  
 
-  // Step 1: Prompt World App Payment
+  // ==========================================
+  // STEP 1: PAYMENT PROMPT PEHLE AAYEGA
+  // ==========================================
   try {  
     const { finalPayload } = await MiniKit.commandsAsync.pay({  
       reference: paymentReference,  
@@ -753,7 +741,10 @@ async function handlePlayButtonClick(){
     paymentSuccessful = false;  
   }  
 
-  // Step 2: Payment Cancelled or Failed
+  // ==========================================
+  // STEP 2: AGAR USER PAYMENT CANCEL KARTA HAI
+  // (Database ko touch hi nahi karega!)
+  // ==========================================
   if (!paymentSuccessful) {  
     let existingWarning = document.getElementById('neon-payment-warning');  
     if (!existingWarning) {  
@@ -773,7 +764,9 @@ async function handlePlayButtonClick(){
     return;  
   }  
 
-  // Step 3: Payment Success -> Create/Join Match
+  // ==========================================
+  // STEP 3: PAYMENT CONFIRMED HONE KE BAAD HI ROW BANAYEIN
+  // ==========================================
   hasPaid = true;
   $('wait-status').innerText = `Finding opponent...`;  
 
@@ -888,13 +881,13 @@ async function cancelMatchmaking(showAlert = true) {
   const paid = hasPaid;
   const targetBytes32 = matchIdBytes32Global;
 
+  // SIRF TABHI REFUND HOGA AGAR USER NE ASAL ME PAY KIYA THA
   if (targetMatchId && targetWallet && paid) {  
     try {  
       await supabaseClient.rpc('secure_leave_waiting_match', {  
         p_match_id: targetMatchId, p_wallet: targetWallet  
       });  
 
-      // Direct Vercel Serverless On-Chain Refund Trigger
       if (targetBytes32) {
         fetch('/api/refund-match', {
           method: 'POST',
@@ -1056,7 +1049,6 @@ async function finalizeGame(){
 
   const exactChipEarn = calculatePayout(matchFee);   
 
-  // Direct On-Chain Settlement Call (Winner Payout + Admin Platform Fee)
   if (matchIdBytes32Global && winnerWallet) {
     fetch('/api/refund-match', {
       method: 'POST',
