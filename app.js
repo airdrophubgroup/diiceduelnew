@@ -52,6 +52,7 @@ let selectedFee = 0.5;
 let realWorldIdUser = false;   
 let currentTnvBalance = 0;  
 let currentWldBalance = 100;  
+let hasPaid = false; // Tracks if actual payment completed
 
 let myTurnsLeft = 15;  
 let isTimingLocked = false;  
@@ -733,13 +734,13 @@ async function handlePlayButtonClick(){
     return;  
   }  
 
+  hasPaid = false;
   matchmakingActive = true;  
   $('waiting-overlay').style.display = 'flex';  
   $('wait-status').innerText = `Finding opponent...`;  
 
   let matchRow;  
   try {  
-    // 1. Generate unique Match ID for database tracking
     const newMatchId = crypto.randomUUID();
 
     const { data, error } = await supabaseClient.rpc('join_or_create_match', {  
@@ -749,7 +750,6 @@ async function handlePlayButtonClick(){
     matchRow = Array.isArray(data) ? data[0] : data;  
     if (!matchRow) { resetToHome(); return; }  
 
-    // 2. Safely update row with match_id
     await supabaseClient.from('matches').update({ match_id: newMatchId }).eq('id', matchRow.id);
     matchRow.match_id = newMatchId;
 
@@ -787,6 +787,7 @@ async function handlePlayButtonClick(){
     paymentSuccessful = false;  
   }  
 
+  // Agar user ne payment prompt cancel kar diya ya fail ho gaya
   if (!paymentSuccessful) {  
     let existingWarning = document.getElementById('neon-payment-warning');  
     if (!existingWarning) {  
@@ -806,6 +807,9 @@ async function handlePlayButtonClick(){
     resetToHome();  
     return;  
   }  
+
+  // PAYMENT SUCCESSFUL -> Mark hasPaid = true
+  hasPaid = true;
 
   try {  
     await supabaseClient.rpc('queue_pending_deposit', {  
@@ -889,36 +893,42 @@ async function cancelMatchmaking(showAlert = true) {
   const targetMatchId = matchId;
   const targetWallet = myAddress ? myAddress.toLowerCase().trim() : '';
   const feeToRefund = selectedFee;
+  const paid = hasPaid;
 
   if (targetMatchId && targetWallet) {  
     try {  
-      // 1. Leave match status in DB
+      // Match status reset
       await supabaseClient.rpc('secure_leave_waiting_match', {  
         p_match_id: targetMatchId, p_wallet: targetWallet  
       });  
 
-      // 2. Direct Queue Insert (Immediate DB sync)
-      const { error: insertErr } = await supabaseClient
-        .from('refund_queue')
-        .insert({
-          match_id: targetMatchId,
-          wallet_address: targetWallet,
-          fee: feeToRefund,
-          status: 'pending'
-        });
+      // Sirf tabhi refund_queue mein daalo agar user ne actual me pay kiya ho
+      if (paid) {
+        const { error: insertErr } = await supabaseClient
+          .from('refund_queue')
+          .insert({
+            match_id: targetMatchId,
+            wallet_address: targetWallet,
+            fee: feeToRefund,
+            status: 'pending'
+          });
 
-      // 3. RPC Fallback if direct insert fails
-      if (insertErr) {
-        await supabaseClient.rpc('queue_refund_request', {  
-          p_match_id: targetMatchId, p_wallet: targetWallet  
-        });  
-      }  
+        if (insertErr) {
+          await supabaseClient.rpc('queue_refund_request', {  
+            p_match_id: targetMatchId, p_wallet: targetWallet  
+          });  
+        }  
 
-      if (showAlert) {  
-        alert(`Search cancelled. Your ${feeToRefund} WLD refund is being processed on-chain.`);  
-      }  
+        if (showAlert) {  
+          alert(`Search cancelled. Your ${feeToRefund} WLD refund is being processed on-chain.`);  
+        }  
+      } else {
+        if (showAlert) {
+          alert('Search cancelled.');
+        }
+      }
     } catch(e) {
-      console.error("Cancel refund queue error:", e);
+      console.error("Cancel matchmaking error:", e);
     }  
   }  
   resetToHome();  
@@ -1107,6 +1117,7 @@ function resetToHome(){
   $('start-btn').innerText = `PLAY NOW (${selectedFee} WLD)`;  
   matchmakingActive = false;  
   gameActive = false;  
+  hasPaid = false;
 }  
 
 document.querySelectorAll('.fee-chip').forEach(chip => {  
