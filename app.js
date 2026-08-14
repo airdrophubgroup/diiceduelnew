@@ -52,7 +52,7 @@ let selectedFee = 0.5;
 let realWorldIdUser = false;   
 let currentTnvBalance = 0;  
 let currentWldBalance = 100;  
-let hasPaid = false; // Tracks if actual payment completed
+let hasPaid = false; 
 
 let myTurnsLeft = 15;  
 let isTimingLocked = false;  
@@ -735,8 +735,51 @@ async function handlePlayButtonClick(){
   }  
 
   hasPaid = false;
+  matchId = null;
   matchmakingActive = true;  
   $('waiting-overlay').style.display = 'flex';  
+  $('wait-status').innerText = `Confirm payment in World App...`;  
+
+  const paymentReference = 'ref_' + randomAlphaNumeric(16);  
+  let paymentSuccessful = false;  
+  let onChainTxId = null;  
+
+  // Step 1: Prompt World App Payment BEFORE creating match in database
+  try {  
+    const { finalPayload } = await MiniKit.commandsAsync.pay({  
+      reference: paymentReference,  
+      to: DICE_DUEL_CONTRACT,  
+      tokens: [{ symbol: Tokens.WLD, token_amount: tokenToDecimals(selectedFee, Tokens.WLD).toString() }],  
+      description: `Dice Duel entry fee: ${selectedFee} WLD`,  
+    });  
+    paymentSuccessful = (finalPayload?.status === 'success');  
+    onChainTxId = finalPayload?.transaction_id || null;  
+  } catch (err) {  
+    paymentSuccessful = false;  
+  }  
+
+  // Step 2: If payment was cancelled or failed -> reset immediately without touching database
+  if (!paymentSuccessful) {  
+    let existingWarning = document.getElementById('neon-payment-warning');  
+    if (!existingWarning) {  
+      existingWarning = document.createElement('div');  
+      existingWarning.id = 'neon-payment-warning';  
+      existingWarning.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:99999; background:rgba(15,5,10,0.95); border:2px solid #ff3366; color:#ff3366; padding:14px 20px; border-radius:12px; font-family:"Space Grotesk", sans-serif; font-size:13px; font-weight:700; text-align:center; box-shadow:0 0 20px rgba(255,51,102,0.6); backdrop-filter:blur(8px); transition:opacity 0.3s ease;';  
+      document.body.appendChild(existingWarning);  
+    }  
+    existingWarning.innerHTML = '⚠️ Payment was cancelled or failed.';  
+    existingWarning.style.opacity = '1';  
+    setTimeout(() => {  
+      existingWarning.style.opacity = '0';  
+      setTimeout(() => { existingWarning.remove(); }, 300);  
+    }, 4000);  
+
+    resetToHome();  
+    return;  
+  }  
+
+  // Step 3: Payment is successful -> Now create/join match and mark hasPaid = true
+  hasPaid = true;
   $('wait-status').innerText = `Finding opponent...`;  
 
   let matchRow;  
@@ -760,56 +803,6 @@ async function handlePlayButtonClick(){
 
   matchId = matchRow.id;  
   isP1 = (matchRow.p1_address === myAddress);  
-
-  $('wait-status').innerText = `Confirm payment in World App...`;  
-
-  let matchIdBytes32;  
-  try {  
-    matchIdBytes32 = await matchIdToBytes32(matchRow.match_id || matchId);  
-  } catch (e) {  
-    resetToHome();  
-    return;  
-  }  
-
-  const paymentReference = 'ref_' + randomAlphaNumeric(16);  
-  let paymentSuccessful = false;  
-  let onChainTxId = null;  
-  try {  
-    const { finalPayload } = await MiniKit.commandsAsync.pay({  
-      reference: paymentReference,  
-      to: DICE_DUEL_CONTRACT,  
-      tokens: [{ symbol: Tokens.WLD, token_amount: tokenToDecimals(selectedFee, Tokens.WLD).toString() }],  
-      description: `Dice Duel entry fee: ${selectedFee} WLD`,  
-    });  
-    paymentSuccessful = (finalPayload?.status === 'success');  
-    onChainTxId = finalPayload?.transaction_id || null;  
-  } catch (err) {  
-    paymentSuccessful = false;  
-  }  
-
-  // Agar user ne payment prompt cancel kar diya ya fail ho gaya
-  if (!paymentSuccessful) {  
-    let existingWarning = document.getElementById('neon-payment-warning');  
-    if (!existingWarning) {  
-      existingWarning = document.createElement('div');  
-      existingWarning.id = 'neon-payment-warning';  
-      existingWarning.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:99999; background:rgba(15,5,10,0.95); border:2px solid #ff3366; color:#ff3366; padding:14px 20px; border-radius:12px; font-family:"Space Grotesk", sans-serif; font-size:13px; font-weight:700; text-align:center; box-shadow:0 0 20px rgba(255,51,102,0.6); backdrop-filter:blur(8px); transition:opacity 0.3s ease;';  
-      document.body.appendChild(existingWarning);  
-    }  
-    existingWarning.innerHTML = '⚠️ Payment was cancelled or failed.';  
-    existingWarning.style.opacity = '1';  
-    setTimeout(() => {  
-      existingWarning.style.opacity = '0';  
-      setTimeout(() => { existingWarning.remove(); }, 300);  
-    }, 4000);  
-
-    try { await supabaseClient.rpc('secure_leave_waiting_match', { p_match_id: matchId, p_wallet: myAddress }); } catch(e) {}  
-    resetToHome();  
-    return;  
-  }  
-
-  // PAYMENT SUCCESSFUL -> Mark hasPaid = true
-  hasPaid = true;
 
   try {  
     await supabaseClient.rpc('queue_pending_deposit', {  
@@ -888,54 +881,54 @@ function setupChannel() {
 }  
 
 async function cancelMatchmaking(showAlert = true) {  
-  if (!matchId && !matchmakingActive) return;  
+  if (!matchmakingActive || gameActive) return;  
   
   const targetMatchId = matchId;
   const targetWallet = myAddress ? myAddress.toLowerCase().trim() : '';
   const feeToRefund = selectedFee;
   const paid = hasPaid;
 
-  if (targetMatchId && targetWallet) {  
+  // Agar user ne pay kiya tha aur matchId exist karta hai
+  if (targetMatchId && targetWallet && paid) {  
     try {  
-      // Match status reset
       await supabaseClient.rpc('secure_leave_waiting_match', {  
         p_match_id: targetMatchId, p_wallet: targetWallet  
       });  
 
-      // Sirf tabhi refund_queue mein daalo agar user ne actual me pay kiya ho
-      if (paid) {
-        const { error: insertErr } = await supabaseClient
-          .from('refund_queue')
-          .insert({
-            match_id: targetMatchId,
-            wallet_address: targetWallet,
-            fee: feeToRefund,
-            status: 'pending'
-          });
+      const { error: insertErr } = await supabaseClient
+        .from('refund_queue')
+        .insert({
+          match_id: targetMatchId,
+          wallet_address: targetWallet,
+          fee: feeToRefund,
+          status: 'pending'
+        });
 
-        if (insertErr) {
-          await supabaseClient.rpc('queue_refund_request', {  
-            p_match_id: targetMatchId, p_wallet: targetWallet  
-          });  
-        }  
+      if (insertErr) {
+        await supabaseClient.rpc('queue_refund_request', {  
+          p_match_id: targetMatchId, p_wallet: targetWallet  
+        });  
+      }  
 
-        if (showAlert) {  
-          alert(`Search cancelled. Your ${feeToRefund} WLD refund is being processed on-chain.`);  
-        }  
-      } else {
-        if (showAlert) {
-          alert('Search cancelled.');
-        }
-      }
+      if (showAlert) {  
+        alert(`Search cancelled. Your ${feeToRefund} WLD refund is being processed on-chain.`);  
+      }  
     } catch(e) {
       console.error("Cancel matchmaking error:", e);
     }  
-  }  
+  } else {
+    if (showAlert) {
+      alert('Search cancelled.');
+    }
+  }
+
   resetToHome();  
 }  
 
 async function checkBothReady(){  
   if (!matchmakingActive || gameActive) return;  
+  if (!matchId) return;
+
   const { data, error } = await supabaseClient.from('matches').select('status, p1_username, p2_username').eq('id', matchId).single();  
   if (error) return;  
 
@@ -959,7 +952,7 @@ async function startSyncCountdown(){
 
   stopBackgroundMusic();  
 
-  if (isP1) {  
+  if (isP1 && matchId) {  
     await supabaseClient.rpc('secure_start_match', { p_match_id: matchId, p_wallet: myAddress });  
   }  
 
@@ -1118,6 +1111,7 @@ function resetToHome(){
   matchmakingActive = false;  
   gameActive = false;  
   hasPaid = false;
+  matchId = null;
 }  
 
 document.querySelectorAll('.fee-chip').forEach(chip => {  
