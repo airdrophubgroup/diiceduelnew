@@ -729,18 +729,29 @@ async function handlePlayButtonClick(){
   // ==========================================
   hasPaid = true;
 
+  function showDebugBox(text) {
+    let box = document.getElementById('debug-box-force-confirm');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'debug-box-force-confirm';
+      box.style.cssText = 'position:fixed; bottom:10px; left:10px; right:10px; z-index:999999; background:#000; color:#0f0; font-family:monospace; font-size:11px; padding:12px; border:2px solid #0f0; border-radius:8px; max-height:40vh; overflow:auto; word-break:break-all; white-space:pre-wrap;';
+      document.body.appendChild(box);
+    }
+    box.innerText = text;
+  }
+
   try {
     const { data: fcpData, error: fcpErr } = await supabaseClient.rpc('force_confirm_payment', {
       p_match_id: matchId,
       p_is_p1: isP1
     });
     if (fcpErr) {
-      alert('DEBUG force_confirm_payment FAILED: ' + JSON.stringify(fcpErr) + ' | matchId=' + matchId + ' isP1=' + isP1);
+      showDebugBox('FAILED: ' + JSON.stringify(fcpErr) + ' | matchId=' + matchId + ' isP1=' + isP1);
     } else {
-      alert('DEBUG force_confirm_payment OK: ' + JSON.stringify(fcpData) + ' | matchId=' + matchId + ' isP1=' + isP1);
+      showDebugBox('OK: ' + JSON.stringify(fcpData) + ' | matchId=' + matchId + ' isP1=' + isP1);
     }
   } catch(e) {
-    alert('DEBUG force_confirm_payment EXCEPTION: ' + e.message + ' | matchId=' + matchId + ' isP1=' + isP1);
+    showDebugBox('EXCEPTION: ' + e.message + ' | matchId=' + matchId + ' isP1=' + isP1);
   }
 
   let existingSuccess = document.getElementById('neon-payment-success');  
