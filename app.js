@@ -11,24 +11,6 @@ const WLD_TOKEN_CONTRACT = "0x2cFc85d8E48F8EAB294be644d9E25C3030863003";
 const WORLDCHAIN_RPC = "https://worldchain-mainnet.g.alchemy.com/public";  
 const DICE_DUEL_CONTRACT = "0x2f9D3bC7125d563434cbc601b15Add6Ba0F3F3Db";  
 
-// BACKGROUND SETUP  
-let bgMusic = new Audio('assets/bg-music.mp3');   
-bgMusic.loop = true;   
-bgMusic.volume = 0.4;   
-
-function startBackgroundMusic() {  
-  try {  
-    bgMusic.play().catch(err => console.log("Audio play blocked:", err));  
-  } catch (e) {}  
-}  
-
-function stopBackgroundMusic() {  
-  try {  
-    bgMusic.pause();  
-    bgMusic.currentTime = 0;  
-  } catch (e) {}  
-}  
-
 const FEE_WEI = {  
   0.1: "100000000000000000", 0.2: "200000000000000000", 0.5: "500000000000000000",  
   1: "1000000000000000000", 2: "2000000000000000000", 5: "5000000000000000000",  
@@ -97,7 +79,6 @@ function waitForMiniKitReady(timeoutMs = 2000) {
 }  
 
 window.addEventListener('DOMContentLoaded', async () => {  
-  startBackgroundMusic();  
   try { MiniKit.install(WORLD_APP_ID); } catch(e) {}  
 
   const ready = await waitForMiniKitReady();  
@@ -679,15 +660,34 @@ async function handlePlayButtonClick(){
   matchIdBytes32Global = null;
   matchmakingActive = true;  
   $('waiting-overlay').style.display = 'flex';  
+  $('wait-status').innerText = `Finding opponent...`;  
+
+  let matchRow;  
+  try {  
+    const { data, error } = await supabaseClient.rpc('join_or_create_match', {  
+      p_address: myAddress, p_fee: selectedFee, p_username: myUsername,  
+    });  
+    if (error || !data) { resetToHome(); return; }  
+    matchRow = Array.isArray(data) ? data[0] : data;  
+    if (!matchRow) { resetToHome(); return; }  
+  } catch (err) {  
+    resetToHome();  
+    return;  
+  }  
+
+  matchId = matchRow.id;  
+  isP1 = (matchRow.p1_address === myAddress);  
+
+  try {  
+    matchIdBytes32Global = await matchIdToBytes32(matchRow.match_id || matchId);  
+  } catch (e) {}  
+
   $('wait-status').innerText = `Confirm payment in World App...`;  
 
   const paymentReference = 'ref_' + randomAlphaNumeric(16);  
   let paymentSuccessful = false;  
   let onChainTxId = null;  
 
-  // ==========================================
-  // STEP 1: PAYMENT PROMPT PEHLE AAYEGA
-  // ==========================================
   try {  
     const { finalPayload } = await MiniKit.commandsAsync.pay({  
       reference: paymentReference,  
@@ -701,9 +701,6 @@ async function handlePlayButtonClick(){
     paymentSuccessful = false;  
   }  
 
-  // ==========================================
-  // STEP 2: AGAR CANCEL YA FAIL HUA (ZERO SUPABASE CALL)
-  // ==========================================
   if (!paymentSuccessful) {  
     let existingWarning = document.getElementById('neon-payment-warning');  
     if (!existingWarning) {  
@@ -719,51 +716,18 @@ async function handlePlayButtonClick(){
       setTimeout(() => { existingWarning.remove(); }, 300);  
     }, 4000);  
 
+    try { await supabaseClient.rpc('secure_leave_waiting_match', { p_match_id: matchId, p_wallet: myAddress }); } catch(e) {}  
     resetToHome();  
     return;  
   }  
 
-  // ==========================================
-  // STEP 3: PAYMENT CONFIRMED HONE PAR HI MATCH CREATE
-  // ==========================================
   hasPaid = true;
-  $('wait-status').innerText = `Finding opponent...`;  
-
-  let matchRow;  
-  try {  
-    const newMatchId = crypto.randomUUID();
-
-    const { data, error } = await supabaseClient.rpc('join_or_create_match', {  
-      p_address: myAddress, p_fee: selectedFee, p_username: myUsername,  
-    });  
-    if (error || !data) { resetToHome(); return; }  
-    matchRow = Array.isArray(data) ? data[0] : data;  
-    if (!matchRow) { resetToHome(); return; }  
-
-    await supabaseClient.from('matches').update({ match_id: newMatchId }).eq('id', matchRow.id);
-    matchRow.match_id = newMatchId;
-
-  } catch (err) {  
-    resetToHome();  
-    return;  
-  }  
-
-  matchId = matchRow.id;  
-  isP1 = (matchRow.p1_address === myAddress);  
-
-  try {  
-    matchIdBytes32Global = await matchIdToBytes32(matchRow.match_id || matchId);  
-  } catch (e) {}  
-
-  try {  
-    await supabaseClient.rpc('queue_pending_deposit', {  
-      p_match_id: matchId,  
-      p_wallet: myAddress,  
-      p_fee: selectedFee,  
-      p_reference: paymentReference,  
-      p_tx_id: onChainTxId,  
-    });  
-  } catch (e) {}  
+  try {
+    await supabaseClient.rpc('confirm_player_payment', {
+      p_match_id: matchId,
+      p_wallet: myAddress
+    });
+  } catch(e) {}
 
   let existingSuccess = document.getElementById('neon-payment-success');  
   if (!existingSuccess) {  
@@ -772,7 +736,7 @@ async function handlePlayButtonClick(){
     existingSuccess.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:99999; background:rgba(5,15,10,0.95); border:2px solid #29d9c2; color:#29d9c2; padding:14px 20px; border-radius:12px; font-family:"Space Grotesk", sans-serif; font-size:13px; font-weight:700; text-align:center; box-shadow:0 0 20px rgba(41,217,194,0.6); backdrop-filter:blur(8px); transition:opacity 0.3s ease;';  
     document.body.appendChild(existingSuccess);  
   }  
-  existingSuccess.innerHTML = '✨ Payment sent! Confirming...';  
+  existingSuccess.innerHTML = '✨ Payment confirmed! Waiting for opponent...';  
   existingSuccess.style.opacity = '1';  
   setTimeout(() => {  
     existingSuccess.style.opacity = '0';  
@@ -840,13 +804,13 @@ async function cancelMatchmaking(showAlert = true) {
   const paid = hasPaid;
   const targetBytes32 = matchIdBytes32Global;
 
-  if (targetMatchId && targetWallet && paid) {  
+  if (targetMatchId && targetWallet) {  
     try {  
       await supabaseClient.rpc('secure_leave_waiting_match', {  
         p_match_id: targetMatchId, p_wallet: targetWallet  
       });  
 
-      if (targetBytes32) {
+      if (paid && targetBytes32) {
         fetch('/api/refund-match', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -855,19 +819,19 @@ async function cancelMatchmaking(showAlert = true) {
             action: 'CANCEL_REFUND'
           })
         }).catch(err => console.error("Refund API Error:", err));
-      }
 
-      if (showAlert) {  
-        alert(`Search cancelled. Your ${feeToRefund} WLD refund has been processed.`);  
-      }  
+        if (showAlert) {  
+          alert(`Search cancelled. Your ${feeToRefund} WLD refund has been processed.`);  
+        }  
+      } else {
+        if (showAlert) {
+          alert('Search cancelled.');
+        }
+      }
     } catch(e) {
       console.error("Cancel error:", e);
     }  
-  } else {
-    if (showAlert) {
-      alert('Search cancelled.');
-    }
-  }
+  }  
 
   resetToHome();  
 }  
@@ -876,10 +840,15 @@ async function checkBothReady(){
   if (!matchmakingActive || gameActive) return;  
   if (!matchId) return;
 
-  const { data, error } = await supabaseClient.from('matches').select('status, p1_username, p2_username, match_id').eq('id', matchId).single();  
-  if (error) return;  
+  const { data, error } = await supabaseClient
+    .from('matches')
+    .select('status, p1_username, p2_username, p1_paid, p2_paid, match_id')
+    .eq('id', matchId)
+    .single();  
 
-  if (data.status === 'matched' || data.status === 'playing'){  
+  if (error || !data) return;  
+
+  if (data.p1_paid === true && data.p2_paid === true && (data.status === 'matched' || data.status === 'playing')){  
     if (pollTimer) clearInterval(pollTimer);  
     $('opp-name-tag').innerText = (isP1 ? data.p2_username : data.p1_username) || 'OPP';  
     localStorage.setItem("currentMatchId", matchId);  
@@ -900,8 +869,6 @@ async function startSyncCountdown(){
   gameActive = true;  
   clearInterval(mTimer);  
   if (pollTimer) clearInterval(pollTimer);  
-
-  stopBackgroundMusic();  
 
   if (isP1 && matchId) {  
     await supabaseClient.rpc('secure_start_match', { p_match_id: matchId, p_wallet: myAddress });  
