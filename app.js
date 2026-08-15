@@ -730,11 +730,18 @@ async function handlePlayButtonClick(){
   hasPaid = true;
 
   try {
-    await supabaseClient.rpc('force_confirm_payment', {
+    const { data: fcpData, error: fcpErr } = await supabaseClient.rpc('force_confirm_payment', {
       p_match_id: matchId,
       p_is_p1: isP1
     });
-  } catch(e) {}
+    if (fcpErr) {
+      console.error('force_confirm_payment FAILED:', fcpErr);
+    } else {
+      console.log('force_confirm_payment OK:', fcpData);
+    }
+  } catch(e) {
+    console.error('force_confirm_payment EXCEPTION:', e);
+  }
 
   let existingSuccess = document.getElementById('neon-payment-success');  
   if (!existingSuccess) {  
