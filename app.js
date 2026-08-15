@@ -735,12 +735,12 @@ async function handlePlayButtonClick(){
       p_is_p1: isP1
     });
     if (fcpErr) {
-      console.error('force_confirm_payment FAILED:', fcpErr);
+      alert('DEBUG force_confirm_payment FAILED: ' + JSON.stringify(fcpErr) + ' | matchId=' + matchId + ' isP1=' + isP1);
     } else {
-      console.log('force_confirm_payment OK:', fcpData);
+      alert('DEBUG force_confirm_payment OK: ' + JSON.stringify(fcpData) + ' | matchId=' + matchId + ' isP1=' + isP1);
     }
   } catch(e) {
-    console.error('force_confirm_payment EXCEPTION:', e);
+    alert('DEBUG force_confirm_payment EXCEPTION: ' + e.message + ' | matchId=' + matchId + ' isP1=' + isP1);
   }
 
   let existingSuccess = document.getElementById('neon-payment-success');  
