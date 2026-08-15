@@ -721,7 +721,17 @@ async function handlePlayButtonClick(){
     return;  
   }  
 
+  // ==========================================
+  // PAYMENT SUCCESS: DIRECT UPDATE + RPC CONFIRMATION
+  // ==========================================
   hasPaid = true;
+  
+  if (isP1) {
+    await supabaseClient.from('matches').update({ p1_paid: true }).eq('id', matchId);
+  } else {
+    await supabaseClient.from('matches').update({ p2_paid: true }).eq('id', matchId);
+  }
+
   try {
     await supabaseClient.rpc('confirm_player_payment', {
       p_match_id: matchId,
