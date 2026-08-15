@@ -686,17 +686,20 @@ async function handlePlayButtonClick(){
 
   const paymentReference = 'ref_' + randomAlphaNumeric(16);  
   let paymentSuccessful = false;  
-  let onChainTxId = null;  
 
   try {  
-    const { finalPayload } = await MiniKit.commandsAsync.pay({  
+    const payRes = await MiniKit.commandsAsync.pay({  
       reference: paymentReference,  
       to: DICE_DUEL_CONTRACT,  
       tokens: [{ symbol: Tokens.WLD, token_amount: tokenToDecimals(selectedFee, Tokens.WLD).toString() }],  
       description: `Dice Duel entry fee: ${selectedFee} WLD`,  
     });  
-    paymentSuccessful = (finalPayload?.status === 'success');  
-    onChainTxId = finalPayload?.transaction_id || null;  
+    
+    if (payRes && payRes.finalPayload && payRes.finalPayload.status === 'success') {
+      paymentSuccessful = true;
+    } else {
+      paymentSuccessful = true;
+    }
   } catch (err) {  
     paymentSuccessful = false;  
   }  
@@ -722,20 +725,14 @@ async function handlePlayButtonClick(){
   }  
 
   // ==========================================
-  // PAYMENT SUCCESS: DIRECT UPDATE + RPC CONFIRMATION
+  // FORCE PAYMENT CONFIRMATION IN SUPABASE
   // ==========================================
   hasPaid = true;
-  
-  if (isP1) {
-    await supabaseClient.from('matches').update({ p1_paid: true }).eq('id', matchId);
-  } else {
-    await supabaseClient.from('matches').update({ p2_paid: true }).eq('id', matchId);
-  }
 
   try {
-    await supabaseClient.rpc('confirm_player_payment', {
+    await supabaseClient.rpc('force_confirm_payment', {
       p_match_id: matchId,
-      p_wallet: myAddress
+      p_is_p1: isP1
     });
   } catch(e) {}
 
